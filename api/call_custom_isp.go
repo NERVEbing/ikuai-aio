@@ -24,6 +24,7 @@ func (c *Client) CustomISPShow() (*CustomISPShowResp, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var mod CustomISPShowResp
 	if err = json.Unmarshal(resp, &mod); err != nil {
 		return nil, err
@@ -60,6 +61,7 @@ func (c *Client) CustomISPDel(ids []int) error {
 	if err != nil {
 		return err
 	}
+
 	var mod CustomISPDelResp
 	if err = json.Unmarshal(resp, &mod); err != nil {
 		return err
@@ -119,6 +121,7 @@ func (c *Client) CustomISPAdd(name string, ipGroupSlice []string, comment string
 		if err != nil {
 			return 0, err
 		}
+
 		var mod CustomISPAddResp
 		if err = json.Unmarshal(resp, &mod); err != nil {
 			return 0, err

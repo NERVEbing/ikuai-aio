@@ -14,12 +14,16 @@ type LoginResp struct {
 type CallReq struct {
 	FuncName string      `json:"func_name"`
 	Action   string      `json:"action"`
-	Param    interface{} `json:"param"`
+	Param    interface{} `json:"param,omitempty"`
 }
 
 type CallResp struct {
 	ErrMsg string `json:"ErrMsg"`
 	Result int    `json:"Result"`
+}
+
+type AuthCodeShowResp struct {
+	CallResp
 }
 
 type CustomISPShowResp struct {

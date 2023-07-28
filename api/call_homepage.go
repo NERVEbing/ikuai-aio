@@ -21,6 +21,7 @@ func (c *Client) HomepageShowSysStat() (*HomepageShowSysStatResp, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var mod HomepageShowSysStatResp
 	if err = json.Unmarshal(resp, &mod); err != nil {
 		return nil, err

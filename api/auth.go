@@ -6,6 +6,8 @@ import (
 	"errors"
 )
 
+var UnauthorizedError = errors.New("no login authentication")
+
 func (c *Client) Login() error {
 	req := &LoginReq{
 		Username: c.iKuaiUsername,
@@ -20,12 +22,13 @@ func (c *Client) Login() error {
 	if err != nil {
 		return err
 	}
-	r := &LoginResp{}
-	if err = json.Unmarshal(resp, r); err != nil {
+
+	var mod LoginResp
+	if err = json.Unmarshal(resp, &mod); err != nil {
 		return err
 	}
-	if r.Result != 10000 {
-		return errors.New(r.ErrMsg)
+	if mod.Result != 10000 {
+		return errors.New(mod.ErrMsg)
 	}
 
 	return nil

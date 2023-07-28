@@ -1,6 +1,7 @@
 package exporter
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -97,6 +98,13 @@ func (m *Metrics) Collect(ch chan<- prometheus.Metric) {
 			)
 		}
 	}()
+
+	if errors.Is(m.client.AuthCodeShow(), api.UnauthorizedError) {
+		if err := m.client.Login(); err != nil {
+			logger("Login", "error: %s", err)
+			return
+		}
+	}
 
 	homepageShowSysStatResp, err := m.client.HomepageShowSysStat()
 	if err != nil {

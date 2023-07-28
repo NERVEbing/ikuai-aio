@@ -2,7 +2,6 @@ package job
 
 import (
 	"bufio"
-	"log"
 	"net/http"
 
 	"github.com/NERVEbing/ikuai-aio/api"
@@ -14,13 +13,13 @@ func updateStreamDomain(c *config.IKuaiCronStreamDomain) error {
 	for _, url := range c.Url {
 		r, err := fetch(url)
 		if err != nil {
-			log.Printf("fetch %s error: %s", url, err)
+			logger("updateStreamDomain", "fetch %s error: %s", url, err)
 			continue
 		}
-		log.Printf("fetch %s success, rows: %d", url, len(r))
+		logger("updateStreamDomain", "fetch %s success, rows: %d", url, len(r))
 		rows = append(rows, r...)
 	}
-	log.Printf("fetch total: %d", len(rows))
+	logger("updateStreamDomain", "fetch total: %d", len(rows))
 	if len(rows) == 0 {
 		return nil
 	}
@@ -44,7 +43,7 @@ func updateStreamDomain(c *config.IKuaiCronStreamDomain) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("update stream domain success, count: %d", count)
+	logger("updateStreamDomain", "update stream domain success, count: %d", count)
 
 	return nil
 }
@@ -58,7 +57,7 @@ func fetch(url string) ([]string, error) {
 	scanner := bufio.NewScanner(resp.Body)
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Println(err)
+			logger("defer fetch", "close body error: %s", err)
 		}
 	}()
 	for scanner.Scan() {

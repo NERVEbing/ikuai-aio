@@ -1,8 +1,6 @@
 package job
 
 import (
-	"log"
-
 	"github.com/NERVEbing/ikuai-aio/api"
 	"github.com/NERVEbing/ikuai-aio/config"
 )
@@ -12,13 +10,13 @@ func updateCustomISP(c *config.IKuaiCronCustomISP) error {
 	for _, url := range c.Url {
 		r, err := fetch(url)
 		if err != nil {
-			log.Printf("fetch %s error: %s", url, err)
+			logger("updateCustomISP", "fetch %s error: %s", url, err)
 			continue
 		}
-		log.Printf("fetch %s success, rows: %d", url, len(r))
+		logger("updateCustomISP", "fetch %s success, rows: %d", url, len(r))
 		rows = append(rows, r...)
 	}
-	log.Printf("fetch total: %d", len(rows))
+	logger("updateCustomISP", "fetch total: %d", len(rows))
 	if len(rows) == 0 {
 		return nil
 	}
@@ -42,7 +40,7 @@ func updateCustomISP(c *config.IKuaiCronCustomISP) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("update custom isp success, count: %d", count)
+	logger("updateCustomISP", "update custom isp success, count: %d", count)
 
 	return nil
 }

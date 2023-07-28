@@ -23,6 +23,7 @@ func (c *Client) StreamDomainShow() (*StreamDomainShowResp, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var mod StreamDomainShowResp
 	if err = json.Unmarshal(resp, &mod); err != nil {
 		return nil, err
@@ -59,6 +60,7 @@ func (c *Client) StreamDomainDel(ids []int) error {
 	if err != nil {
 		return err
 	}
+
 	var mod StreamDomainDelResp
 	if err = json.Unmarshal(resp, &mod); err != nil {
 		return err
@@ -106,6 +108,7 @@ func (c *Client) StreamDomainAdd(interfaceSlice []string, domainSlice []string, 
 		if err != nil {
 			return 0, err
 		}
+
 		var mod StreamDomainAddResp
 		if err = json.Unmarshal(resp, &mod); err != nil {
 			return 0, err
