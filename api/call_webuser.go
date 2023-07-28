@@ -2,30 +2,29 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 )
 
-func (c *Client) AuthCodeShow() error {
+func (c *Client) WebUserShow() (*WebUserShowResp, error) {
 	req := &CallReq{
-		FuncName: "auth_code",
+		FuncName: "webuser",
 		Action:   "show",
+		Param: map[string]string{
+			"TYPE": "mod_passwd",
+		},
 	}
 	b, err := json.Marshal(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resp, err := c.request(iKuaiCallPath, b)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	var mod AuthCodeShowResp
+	var mod WebUserShowResp
 	if err = json.Unmarshal(resp, &mod); err != nil {
-		return err
-	}
-	if mod.Result != 30000 {
-		return errors.New(mod.ErrMsg)
+		return nil, err
 	}
 
-	return nil
+	return &mod, nil
 }

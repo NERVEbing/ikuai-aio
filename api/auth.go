@@ -6,8 +6,6 @@ import (
 	"errors"
 )
 
-var UnauthorizedError = errors.New("no login authentication")
-
 func (c *Client) Login() error {
 	req := &LoginReq{
 		Username: c.iKuaiUsername,
@@ -32,4 +30,16 @@ func (c *Client) Login() error {
 	}
 
 	return nil
+}
+
+func (c *Client) IsLogin() bool {
+	r, err := c.WebUserShow()
+	if err != nil {
+		return false
+	}
+	if r.Result == 10014 {
+		return false
+	}
+
+	return true
 }

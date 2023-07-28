@@ -8,7 +8,6 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: nervebing/ikuai-aio
-  BUILDX_NO_DEFAULT_ATTESTATIONS: 1
 
 jobs:
   build:

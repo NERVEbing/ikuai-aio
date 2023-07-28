@@ -1,7 +1,6 @@
 package exporter
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -99,11 +98,13 @@ func (m *Metrics) Collect(ch chan<- prometheus.Metric) {
 		}
 	}()
 
-	if errors.Is(m.client.AuthCodeShow(), api.UnauthorizedError) {
+	if !m.client.IsLogin() {
+		logger("IsLogin", "cookie has expired, try logged in again")
 		if err := m.client.Login(); err != nil {
 			logger("Login", "error: %s", err)
 			return
 		}
+		logger("Login", "success")
 	}
 
 	homepageShowSysStatResp, err := m.client.HomepageShowSysStat()

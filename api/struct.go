@@ -22,7 +22,7 @@ type CallResp struct {
 	Result int    `json:"Result"`
 }
 
-type AuthCodeShowResp struct {
+type WebUserShowResp struct {
 	CallResp
 }
 
