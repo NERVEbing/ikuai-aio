@@ -30,8 +30,8 @@ type Config struct {
 	IKuaiUsername             string
 	IKuaiPassword             string
 	IKuaiCronSkipStart        bool
-	IKuaiCronCustomISPList    map[string]*IKuaiCronCustomISP
-	IKuaiCronStreamDomainList map[string]*IKuaiCronStreamDomain
+	IKuaiCronCustomISPList    []*IKuaiCronCustomISP
+	IKuaiCronStreamDomainList []*IKuaiCronStreamDomain
 	IKuaiExporterDisable      bool
 	IKuaiExporterListenAddr   string
 }
@@ -84,22 +84,22 @@ func Load() *Config {
 	iKuaiExporterDisableStr := getEnv("IKUAI_EXPORTER_DISABLE", strconv.FormatBool(defaultIKuaiExporterDisable))
 	iKuaiExporterDisable := iKuaiExporterDisableStr == "true"
 
-	C = &Config{
-		HttpInsecureSkipVerify:    httpInsecureSkipVerify,
-		HttpTimeout:               httpTimeout,
-		Timezone:                  timezone,
-		IKuaiAddr:                 iKuaiAddr,
-		IKuaiUsername:             iKuaiUsername,
-		IKuaiPassword:             iKuaiPassword,
-		IKuaiCronSkipStart:        iKuaiCronSkipStart,
-		IKuaiCronCustomISPList:    map[string]*IKuaiCronCustomISP{},
-		IKuaiCronStreamDomainList: map[string]*IKuaiCronStreamDomain{},
-		IKuaiExporterListenAddr:   iKuaiExporterListenAddr,
-		IKuaiExporterDisable:      iKuaiExporterDisable,
+	c := &Config{
+		HttpInsecureSkipVerify:  httpInsecureSkipVerify,
+		HttpTimeout:             httpTimeout,
+		Timezone:                timezone,
+		IKuaiAddr:               iKuaiAddr,
+		IKuaiUsername:           iKuaiUsername,
+		IKuaiPassword:           iKuaiPassword,
+		IKuaiCronSkipStart:      iKuaiCronSkipStart,
+		IKuaiExporterListenAddr: iKuaiExporterListenAddr,
+		IKuaiExporterDisable:    iKuaiExporterDisable,
 	}
 
-	matchCronCustomISP()
-	matchCronStreamDomain()
+	c.matchCronCustomISP()
+	c.matchCronStreamDomain()
+
+	C = c
 
 	return C
 }
@@ -112,8 +112,10 @@ func getEnv(key, fallback string) string {
 	return value
 }
 
-func matchCronCustomISP() {
+func (c *Config) matchCronCustomISP() {
 	re := regexp.MustCompile(`IKUAI_CRON_CUSTOM_ISP_(\d+)`)
+	m := map[string]*IKuaiCronCustomISP{}
+
 	for _, env := range os.Environ() {
 		match := re.FindStringSubmatch(env)
 		if len(match) < 2 {
@@ -138,8 +140,9 @@ func matchCronCustomISP() {
 		if len(slice) > 3 {
 			comment = slice[3]
 		}
-		if _, exist := C.IKuaiCronCustomISPList[id]; !exist {
-			C.IKuaiCronCustomISPList[id] = &IKuaiCronCustomISP{
+
+		if _, exist := m[id]; !exist {
+			m[id] = &IKuaiCronCustomISP{
 				Cron:    cron,
 				Name:    name,
 				Url:     strings.Split(url, ","),
@@ -147,10 +150,16 @@ func matchCronCustomISP() {
 			}
 		}
 	}
+
+	for _, v := range m {
+		c.IKuaiCronCustomISPList = append(c.IKuaiCronCustomISPList, v)
+	}
 }
 
-func matchCronStreamDomain() {
+func (c *Config) matchCronStreamDomain() {
 	re := regexp.MustCompile(`IKUAI_CRON_STREAM_DOMAIN_(\d+)`)
+	m := map[string]*IKuaiCronStreamDomain{}
+
 	for _, env := range os.Environ() {
 		match := re.FindStringSubmatch(env)
 		if len(match) < 2 {
@@ -180,8 +189,8 @@ func matchCronStreamDomain() {
 			comment = slice[4]
 		}
 
-		if _, exist := C.IKuaiCronStreamDomainList[id]; !exist {
-			C.IKuaiCronStreamDomainList[id] = &IKuaiCronStreamDomain{
+		if _, exist := m[id]; !exist {
+			m[id] = &IKuaiCronStreamDomain{
 				Cron:      cron,
 				Interface: strings.Split(interFace, ","),
 				Url:       strings.Split(url, ","),
@@ -189,5 +198,9 @@ func matchCronStreamDomain() {
 				Comment:   comment,
 			}
 		}
+	}
+
+	for _, v := range m {
+		c.IKuaiCronStreamDomainList = append(c.IKuaiCronStreamDomainList, v)
 	}
 }

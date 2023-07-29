@@ -5,18 +5,18 @@ import (
 	"github.com/NERVEbing/ikuai-aio/config"
 )
 
-func updateCustomISP(c *config.IKuaiCronCustomISP) error {
+func updateCustomISP(c *config.IKuaiCronCustomISP, tag string) error {
 	var rows []string
 	for _, url := range c.Url {
 		r, err := fetch(url)
 		if err != nil {
-			logger("updateCustomISP", "fetch %s error: %s", url, err)
+			logger(tag, "fetch %s error: %s", url, err)
 			continue
 		}
-		logger("updateCustomISP", "fetch %s success, rows: %d", url, len(r))
+		logger(tag, "fetch %s success, rows: %d", url, len(r))
 		rows = append(rows, r...)
 	}
-	logger("updateCustomISP", "fetch total: %d", len(rows))
+	logger(tag, "fetch total: %d", len(rows))
 	if len(rows) == 0 {
 		return nil
 	}
@@ -31,7 +31,9 @@ func updateCustomISP(c *config.IKuaiCronCustomISP) error {
 	}
 	var ids []int
 	for _, i := range customISPShowResp.Data.Data {
-		ids = append(ids, i.ID)
+		if i.Name == c.Name {
+			ids = append(ids, i.ID)
+		}
 	}
 	if err = client.CustomISPDel(ids); err != nil {
 		return err
@@ -40,7 +42,7 @@ func updateCustomISP(c *config.IKuaiCronCustomISP) error {
 	if err != nil {
 		return err
 	}
-	logger("updateCustomISP", "update custom isp success, count: %d", count)
+	logger(tag, "update custom isp success, count: %d", count)
 
 	return nil
 }

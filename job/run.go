@@ -1,8 +1,11 @@
 package job
 
 import (
+	"bufio"
 	"fmt"
 	"log"
+	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/NERVEbing/ikuai-aio/config"
@@ -10,14 +13,12 @@ import (
 )
 
 func Run(c *config.Config) error {
-	if len(c.IKuaiCronCustomISPList)+len(c.IKuaiCronStreamDomainList) == 0 {
-		logger("Run", "there are currently no tasks")
-		return nil
-	}
-
 	cron := gocron.NewScheduler(c.Timezone)
+	cron.SetMaxConcurrentJobs(1, gocron.WaitMode)
 
-	for id, i := range c.IKuaiCronCustomISPList {
+	for n, i := range c.IKuaiCronCustomISPList {
+		tag := "updateCustomISP" + "-" + strconv.Itoa(n+1)
+		cron.Name(tag).Tag(tag)
 		interval, err := time.ParseDuration(i.Cron)
 		if err != nil {
 			cron = cron.Cron(i.Cron)
@@ -27,19 +28,15 @@ func Run(c *config.Config) error {
 				cron = cron.StartAt(time.Now().Add(interval))
 			}
 		}
-
-		if _, err = cron.Do(func() {
-			_, next := cron.NextRun()
-			logger("updateCustomISP", "id: %s, running...", id)
-			err = updateCustomISP(i)
-			logger("updateCustomISP", "id: %s, finished, error: %v, next run time: %s", id, err, next.String())
-		}); err != nil {
-			log.Println(err)
+		if _, err = cron.Do(updateCustomISP, i, tag); err != nil {
+			logger("cron", "tag: %s, error: %v", tag, err)
 		}
-		logger("updateCustomISP", "id: %s, cron/interval: %s, skip start: %t, timezone: %s", id, i.Cron, c.IKuaiCronSkipStart, c.Timezone)
+		logger(tag, "cron/interval: %s, skip start: %t, timezone: %s", i.Cron, c.IKuaiCronSkipStart, c.Timezone)
 	}
 
-	for id, i := range c.IKuaiCronStreamDomainList {
+	for n, i := range c.IKuaiCronStreamDomainList {
+		tag := "updateStreamDomain" + "-" + strconv.Itoa(n+1)
+		cron.Name(tag).Tag(tag)
 		interval, err := time.ParseDuration(i.Cron)
 		if err != nil {
 			cron = cron.Cron(i.Cron)
@@ -49,23 +46,34 @@ func Run(c *config.Config) error {
 				cron = cron.StartAt(time.Now().Add(interval))
 			}
 		}
-
-		if _, err = cron.Do(func() {
-			_, next := cron.NextRun()
-			logger("updateStreamDomain", "id: %s, running...", id)
-			err = updateStreamDomain(i)
-			logger("updateStreamDomain", "id: %s, finished, error: %v, next run time: %s", id, err, next.String())
-		}); err != nil {
-			log.Println(err)
+		if _, err = cron.Do(updateStreamDomain, i, tag); err != nil {
+			logger("cron", "tag: %s, error: %v", tag, err)
 		}
-		logger("updateStreamDomain", "id: %s, cron/interval: %s, skip start: %t, timezone: %s", id, i.Cron, c.IKuaiCronSkipStart, c.Timezone)
+		logger(tag, "cron/interval: %s, skip start: %t, timezone: %s", i.Cron, c.IKuaiCronSkipStart, c.Timezone)
 	}
 
-	if cron.Len() == 0 {
-		logger("Run", "ikuai job length: %d, skip running", cron.Len())
-		return nil
-	}
-	logger("Run", "ikuai job length: %d", cron.Len())
+	cron.RegisterEventListeners(
+		gocron.BeforeJobRuns(func(tag string) {
+			logger(tag, "running...")
+		}),
+		gocron.AfterJobRuns(func(tag string) {
+			jobs, err := cron.FindJobsByTag(tag)
+			if err != nil {
+				logger("cron", "error: %s", err.Error())
+			}
+			for _, i := range jobs {
+				logger(tag, "finished, next run time: %s", i.NextRun().String())
+			}
+		}),
+		gocron.WhenJobReturnsNoError(func(tag string) {
+			logger(tag, "success")
+		}),
+		gocron.WhenJobReturnsError(func(tag string, err error) {
+			logger(tag, "failed, error: %s", err.Error())
+		}),
+	)
+
+	logger("Run", "job length: %d", cron.Len())
 	cron.StartBlocking()
 
 	return nil
@@ -74,4 +82,23 @@ func Run(c *config.Config) error {
 func logger(tag string, format string, v ...any) {
 	s := fmt.Sprintf("[job] tag: [%s], %s", tag, fmt.Sprintf(format, v...))
 	log.Printf(s)
+}
+
+func fetch(url string) ([]string, error) {
+	var rows []string
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logger("defer fetch", "close body error: %s", err)
+		}
+	}()
+	for scanner.Scan() {
+		rows = append(rows, scanner.Text())
+	}
+
+	return rows, nil
 }
