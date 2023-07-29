@@ -20,7 +20,7 @@
         </a>
     </p>
     <a href="grafana/dashboard.jpg">
-        <img alt="grafana" src="grafana/dashboard.jpg" style="height: 600px" />
+        <img alt="grafana" src="grafana/dashboard.jpg" style="max-height: 600px" />
     </a>
 </div>
 
