@@ -10,13 +10,13 @@ func updateStreamDomain(c *config.IKuaiCronStreamDomain, tag string) error {
 	for _, url := range c.Url {
 		r, err := fetch(url)
 		if err != nil {
-			logger(tag, "fetch %s error: %s", url, err)
+			logger(tag, "fetch %s failed, error: %s", url, err)
 			continue
 		}
 		logger(tag, "fetch %s success, rows: %d", url, len(r))
 		rows = append(rows, r...)
 	}
-	logger(tag, "fetch total: %d", len(rows))
+	logger(tag, "fetch total rows: %d", len(rows))
 	if len(rows) == 0 {
 		return nil
 	}
@@ -42,7 +42,7 @@ func updateStreamDomain(c *config.IKuaiCronStreamDomain, tag string) error {
 	if err != nil {
 		return err
 	}
-	logger(tag, "update stream domain success, count: %d", count)
+	logger(tag, "add stream domain unique rows count: %d", count)
 
 	return nil
 }
