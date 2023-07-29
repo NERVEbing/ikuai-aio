@@ -79,19 +79,18 @@ func (c *Client) CustomISPAdd(name string, ipGroupSlice []string, comment string
 		comment = "ikuai-aio"
 	}
 	for _, i := range ipGroupSlice {
-		s := i
 		ip := net.ParseIP(i)
 		if ip != nil && ip.To4() != nil {
-			s = ip.String()
+			i = ip.String()
 		} else {
 			ip, cidr, err := net.ParseCIDR(i)
 			if err != nil || ip.To4() == nil {
 				continue
 			}
-			s = cidr.String()
+			i = cidr.String()
 		}
-		if _, exist := m[s]; !exist {
-			m[s] = false
+		if _, exist := m[i]; !exist {
+			m[i] = false
 		}
 	}
 

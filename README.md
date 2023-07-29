@@ -1,6 +1,6 @@
 <div align="center">
     <h1>iKuai All in One</h1>
-    <p align="center">
+    <p>
         <a href="https://github.com/nervebing/ikuai-aio/blob/master/LICENSE">
             <img alt="GitHub" src="https://img.shields.io/github/license/nervebing/ikuai-aio" />
         </a>

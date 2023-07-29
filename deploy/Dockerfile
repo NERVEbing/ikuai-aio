@@ -9,9 +9,9 @@ ENV GO111MODULE=on \
 
 RUN mkdir -p bin && go build -o ./bin ./...
 
-FROM alpine
+FROM alpine:latest
 
-RUN apk update && apk add tzdata
+RUN apk update && apk --no-cache add tzdata
 
 ENV TZ=Asia/Shanghai
 
