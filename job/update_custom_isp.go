@@ -1,12 +1,15 @@
 package job
 
 import (
+	"time"
+
 	"github.com/NERVEbing/ikuai-aio/api"
 	"github.com/NERVEbing/ikuai-aio/config"
 )
 
 func updateCustomISP(c *config.IKuaiCronCustomISP, tag string) error {
 	var rows []string
+	start := time.Now()
 	for _, url := range c.Url {
 		r, err := fetch(url)
 		if err != nil {
@@ -42,7 +45,7 @@ func updateCustomISP(c *config.IKuaiCronCustomISP, tag string) error {
 	if err != nil {
 		return err
 	}
-	logger(tag, "add custom isp unique rows count: %d", count)
+	logger(tag, "add custom isp unique rows count: %d, duration: %s", count, time.Now().Sub(start).String())
 
 	return nil
 }

@@ -2,9 +2,7 @@ package api
 
 import (
 	"bytes"
-	"crypto/md5"
 	"crypto/tls"
-	"encoding/hex"
 	"io"
 	"log"
 	"net/http"
@@ -63,26 +61,4 @@ func (c *Client) request(path string, body []byte) ([]byte, error) {
 	}()
 
 	return b, nil
-}
-
-func toMD5(s string) string {
-	sum := md5.Sum([]byte(s))
-	return hex.EncodeToString(sum[:])
-}
-
-func chunkSliceStr(slice []string, size int) [][]string {
-	if size < 1 {
-		return nil
-	}
-	chunks := make([][]string, 0)
-	for i := 0; i < len(slice); i += size {
-		end := i + size
-		if end > len(slice) {
-			end = len(slice)
-		}
-		chunk := slice[i:end]
-		chunks = append(chunks, chunk)
-	}
-
-	return chunks
 }

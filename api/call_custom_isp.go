@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"net"
 	"strconv"
 	"strings"
 )
@@ -79,15 +78,9 @@ func (c *Client) CustomISPAdd(name string, ipGroupSlice []string, comment string
 		comment = "ikuai-aio"
 	}
 	for _, i := range ipGroupSlice {
-		ip := net.ParseIP(i)
-		if ip != nil && ip.To4() != nil {
-			i = ip.String()
-		} else {
-			ip, cidr, err := net.ParseCIDR(i)
-			if err != nil || ip.To4() == nil {
-				continue
-			}
-			i = cidr.String()
+		i = parseIPv4(i)
+		if len(i) == 0 {
+			continue
 		}
 		if _, exist := m[i]; !exist {
 			m[i] = false

@@ -75,10 +75,14 @@ func (c *Client) StreamDomainDel(ids []int) error {
 func (c *Client) StreamDomainAdd(interfaceSlice []string, domainSlice []string, srcAddr string, comment string) (int, error) {
 	m := map[string]bool{}
 	for _, i := range domainSlice {
+		if !isValidDomain(i) {
+			continue
+		}
 		if _, exist := m[i]; !exist {
 			m[i] = false
 		}
 	}
+
 	domainSlice = make([]string, 0, len(m))
 	for row := range m {
 		domainSlice = append(domainSlice, row)

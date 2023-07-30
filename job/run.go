@@ -18,17 +18,8 @@ func Run(c *config.Config) error {
 
 	for n, i := range c.IKuaiCronCustomISPList {
 		tag := "updateCustomISP" + "-" + strconv.Itoa(n+1)
-		cron.Name(tag).Tag(tag)
-		interval, err := time.ParseDuration(i.Cron)
-		if err != nil {
-			cron = cron.Cron(i.Cron)
-		} else {
-			cron = cron.Every(interval)
-			if c.IKuaiCronSkipStart {
-				cron = cron.StartAt(time.Now().Add(interval))
-			}
-		}
-		if _, err = cron.Do(updateCustomISP, i, tag); err != nil {
+		cron = setCron(cron, i.Cron, c.IKuaiCronSkipStart).Name(tag).Tag(tag)
+		if _, err := cron.Do(updateCustomISP, i, tag); err != nil {
 			logger("cron", "tag: %s, error: %v", tag, err)
 		}
 		logger(tag, "cron/interval: %s, skip start: %t, timezone: %s", i.Cron, c.IKuaiCronSkipStart, c.Timezone)
@@ -36,17 +27,8 @@ func Run(c *config.Config) error {
 
 	for n, i := range c.IKuaiCronStreamDomainList {
 		tag := "updateStreamDomain" + "-" + strconv.Itoa(n+1)
-		cron.Name(tag).Tag(tag)
-		interval, err := time.ParseDuration(i.Cron)
-		if err != nil {
-			cron = cron.Cron(i.Cron)
-		} else {
-			cron = cron.Every(interval)
-			if c.IKuaiCronSkipStart {
-				cron = cron.StartAt(time.Now().Add(interval))
-			}
-		}
-		if _, err = cron.Do(updateStreamDomain, i, tag); err != nil {
+		cron = setCron(cron, i.Cron, c.IKuaiCronSkipStart).Name(tag).Tag(tag)
+		if _, err := cron.Do(updateStreamDomain, i, tag); err != nil {
 			logger("cron", "tag: %s, error: %v", tag, err)
 		}
 		logger(tag, "cron/interval: %s, skip start: %t, timezone: %s", i.Cron, c.IKuaiCronSkipStart, c.Timezone)
@@ -101,4 +83,18 @@ func fetch(url string) ([]string, error) {
 	}
 
 	return rows, nil
+}
+
+func setCron(scheduler *gocron.Scheduler, cronStr string, isSkip bool) *gocron.Scheduler {
+	interval, err := time.ParseDuration(cronStr)
+	if err != nil {
+		scheduler = scheduler.Cron(cronStr)
+	} else {
+		scheduler = scheduler.Every(interval)
+		if isSkip {
+			scheduler = scheduler.StartAt(time.Now().Add(interval))
+		}
+	}
+
+	return scheduler
 }
