@@ -42,5 +42,5 @@ func Run(c *config.Config) error {
 
 func logger(tag string, format string, v ...any) {
 	s := fmt.Sprintf("[exporter] tag: [%s], %s", tag, fmt.Sprintf(format, v...))
-	log.Printf(s)
+	log.Printf("%s", s)
 }

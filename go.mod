@@ -1,6 +1,6 @@
 module github.com/NERVEbing/ikuai-aio
 
-go 1.20
+go 1.24.3
 
 require (
 	github.com/go-co-op/gocron v1.30.1
