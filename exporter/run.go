@@ -1,14 +1,15 @@
 package exporter
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 
-	"github.com/NERVEbing/ikuai-aio/api"
 	"github.com/NERVEbing/ikuai-aio/config"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	ikuaiapi "github.com/zy84338719/ikuai-api"
 )
 
 func Run(c *config.Config) error {
@@ -16,9 +17,22 @@ func Run(c *config.Config) error {
 		logger("Run", "ikuai exporter is disable, skip running")
 		return nil
 	}
+
+	opts := []ikuaiapi.ClientOption{
+		ikuaiapi.WithTimeout(c.HttpTimeout),
+		ikuaiapi.WithInsecureSkipVerify(c.HttpInsecureSkipVerify),
+	}
+	if c.IKuaiToken != "" {
+		opts = append(opts, ikuaiapi.WithToken(c.IKuaiToken))
+	}
+
+	client, err := ikuaiapi.NewClientWithLoginContext(context.Background(), c.IKuaiAddr, c.IKuaiUsername, c.IKuaiPassword, opts...)
+	if err != nil {
+		return fmt.Errorf("initial login failed: %w", err)
+	}
+
 	listenAddr := c.IKuaiExporterListenAddr
 	metricsPath := "/metrics"
-	client := api.NewClient()
 	metrics := NewMetrics("ikuai", client)
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(metrics)
@@ -33,7 +47,7 @@ func Run(c *config.Config) error {
 			</body>
 			</html>`))
 		if err != nil {
-			log.Fatalln(err)
+			log.Println(err)
 		}
 	})
 

@@ -1,10 +1,12 @@
 package job
 
 import (
+	"context"
 	"time"
 
-	"github.com/NERVEbing/ikuai-aio/api"
 	"github.com/NERVEbing/ikuai-aio/config"
+	ikuaiapi "github.com/zy84338719/ikuai-api"
+	"github.com/zy84338719/ikuai-api/service"
 )
 
 func updateCustomISP(c *config.IKuaiCronCustomISP, tag string) error {
@@ -24,28 +26,37 @@ func updateCustomISP(c *config.IKuaiCronCustomISP, tag string) error {
 		return nil
 	}
 
-	client := api.NewClient()
-	if err := client.Login(); err != nil {
+	conf := config.Load()
+	ctx := context.Background()
+	client, err := ikuaiapi.NewClientWithLoginContext(ctx, conf.IKuaiAddr, conf.IKuaiUsername, conf.IKuaiPassword,
+		ikuaiapi.WithTimeout(conf.HttpTimeout),
+		ikuaiapi.WithInsecureSkipVerify(conf.HttpInsecureSkipVerify),
+	)
+	if err != nil {
 		return err
 	}
-	customISPShowResp, err := client.CustomISPShow()
+	defer client.Close()
+
+	fw := service.NewFirewallService(client)
+
+	items, err := fw.GetCustomISP(ctx)
 	if err != nil {
 		return err
 	}
 	var ids []int
-	for _, i := range customISPShowResp.GetData() {
-		if i.Name == c.Name {
-			ids = append(ids, i.ID)
+	for _, item := range items {
+		if item.Name == c.Name {
+			ids = append(ids, item.ID)
 		}
 	}
-	if err = client.CustomISPDel(ids); err != nil {
+	if err = fw.DelCustomISP(ctx, ids); err != nil {
 		return err
 	}
-	count, err := client.CustomISPAdd(c.Name, rows, c.Comment)
+	count, err := fw.AddCustomISP(ctx, c.Name, rows, c.Comment)
 	if err != nil {
 		return err
 	}
-	logger(tag, "add custom isp unique rows count: %d, duration: %s", count, time.Now().Sub(start).String())
+	logger(tag, "add custom isp unique rows count: %d, duration: %s", count, time.Since(start).String())
 
 	return nil
 }

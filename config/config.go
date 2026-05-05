@@ -29,6 +29,7 @@ type Config struct {
 	IKuaiAddr                 string
 	IKuaiUsername             string
 	IKuaiPassword             string
+	IKuaiToken                string
 	IKuaiCronSkipStart        bool
 	IKuaiCronCustomISPList    []*IKuaiCronCustomISP
 	IKuaiCronStreamDomainList []*IKuaiCronStreamDomain
@@ -76,6 +77,7 @@ func Load() *Config {
 	iKuaiAddr := getEnv("IKUAI_ADDR", defaultIKuaiAddr)
 	iKuaiUsername := getEnv("IKUAI_USERNAME", defaultIKuaiUsername)
 	iKuaiPassword := getEnv("IKUAI_PASSWORD", defaultIKuaiPassword)
+	iKuaiToken := getEnv("IKUAI_TOKEN", "")
 
 	iKuaiCronSkipStartStr := getEnv("IKUAI_CRON_SKIP_START", strconv.FormatBool(defaultIKuaiCronSkipStart))
 	iKuaiCronSkipStart := iKuaiCronSkipStartStr == "true"
@@ -91,6 +93,7 @@ func Load() *Config {
 		IKuaiAddr:               iKuaiAddr,
 		IKuaiUsername:           iKuaiUsername,
 		IKuaiPassword:           iKuaiPassword,
+		IKuaiToken:              iKuaiToken,
 		IKuaiCronSkipStart:      iKuaiCronSkipStart,
 		IKuaiExporterListenAddr: iKuaiExporterListenAddr,
 		IKuaiExporterDisable:    iKuaiExporterDisable,

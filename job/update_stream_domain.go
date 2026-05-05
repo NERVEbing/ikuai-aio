@@ -1,10 +1,12 @@
 package job
 
 import (
+	"context"
 	"time"
 
-	"github.com/NERVEbing/ikuai-aio/api"
 	"github.com/NERVEbing/ikuai-aio/config"
+	ikuaiapi "github.com/zy84338719/ikuai-api"
+	"github.com/zy84338719/ikuai-api/service"
 )
 
 func updateStreamDomain(c *config.IKuaiCronStreamDomain, tag string) error {
@@ -24,28 +26,37 @@ func updateStreamDomain(c *config.IKuaiCronStreamDomain, tag string) error {
 		return nil
 	}
 
-	client := api.NewClient()
-	if err := client.Login(); err != nil {
+	conf := config.Load()
+	ctx := context.Background()
+	client, err := ikuaiapi.NewClientWithLoginContext(ctx, conf.IKuaiAddr, conf.IKuaiUsername, conf.IKuaiPassword,
+		ikuaiapi.WithTimeout(conf.HttpTimeout),
+		ikuaiapi.WithInsecureSkipVerify(conf.HttpInsecureSkipVerify),
+	)
+	if err != nil {
 		return err
 	}
-	StreamDomainResp, err := client.StreamDomainShow()
+	defer client.Close()
+
+	fw := service.NewFirewallService(client)
+
+	items, err := fw.GetStreamDomain(ctx)
 	if err != nil {
 		return err
 	}
 	var ids []int
-	for _, i := range StreamDomainResp.GetData() {
-		if i.Comment == c.Comment {
-			ids = append(ids, i.ID)
+	for _, item := range items {
+		if item.Comment == c.Comment {
+			ids = append(ids, item.ID)
 		}
 	}
-	if err = client.StreamDomainDel(ids); err != nil {
+	if err = fw.DelStreamDomain(ctx, ids); err != nil {
 		return err
 	}
-	count, err := client.StreamDomainAdd(c.Interface, rows, c.SrcAddr, c.Comment)
+	count, err := fw.AddStreamDomain(ctx, c.Interface, rows, c.SrcAddr, c.Comment)
 	if err != nil {
 		return err
 	}
-	logger(tag, "add stream domain unique rows count: %d, duration: %s", count, time.Now().Sub(start).String())
+	logger(tag, "add stream domain unique rows count: %d, duration: %s", count, time.Since(start).String())
 
 	return nil
 }
