@@ -10,32 +10,42 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	ikuaiapi "github.com/zy84338719/ikuai-api"
+	exportermetrics "github.com/zy84338719/ikuai_exporter/metrics"
 )
 
 func Run(c *config.Config) error {
 	if c.IKuaiExporterDisable {
-		logger("Run", "ikuai exporter is disable, skip running")
+		logger("Run", "ikuai exporter is disabled, skipping")
 		return nil
 	}
 
-	opts := []ikuaiapi.ClientOption{
-		ikuaiapi.WithTimeout(c.HttpTimeout),
-		ikuaiapi.WithInsecureSkipVerify(c.HttpInsecureSkipVerify),
-	}
-	if c.IKuaiToken != "" {
-		opts = append(opts, ikuaiapi.WithToken(c.IKuaiToken))
-	}
+	var collector prometheus.Collector
 
-	client, err := ikuaiapi.NewClientWithLoginContext(context.Background(), c.IKuaiAddr, c.IKuaiUsername, c.IKuaiPassword, opts...)
-	if err != nil {
-		return fmt.Errorf("initial login failed: %w", err)
+	if c.IKuaiToken != "" {
+		httpsAddr := exportermetrics.ToHTTPS(c.IKuaiAddr)
+		v4client := ikuaiapi.NewV4RESTClient(httpsAddr, c.IKuaiToken,
+			ikuaiapi.WithV4RawMode(false),
+		)
+		collector = exportermetrics.NewV4Collector("ikuai", v4client)
+		logger("Run", "v4 REST token mode  addr=%s", httpsAddr)
+	} else {
+		opts := []ikuaiapi.ClientOption{
+			ikuaiapi.WithTimeout(c.HttpTimeout),
+			ikuaiapi.WithInsecureSkipVerify(c.HttpInsecureSkipVerify),
+		}
+		client, err := ikuaiapi.NewClientWithLoginContext(context.Background(), c.IKuaiAddr, c.IKuaiUsername, c.IKuaiPassword, opts...)
+		if err != nil {
+			return fmt.Errorf("initial login failed: %w", err)
+		}
+		collector = exportermetrics.NewCollector("ikuai", client)
+		logger("Run", "session mode  addr=%s  username=%s", c.IKuaiAddr, c.IKuaiUsername)
 	}
 
 	listenAddr := c.IKuaiExporterListenAddr
 	metricsPath := "/metrics"
-	metrics := NewMetrics("ikuai", client)
+
 	registry := prometheus.NewRegistry()
-	registry.MustRegister(metrics)
+	registry.MustRegister(collector)
 
 	http.Handle(metricsPath, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
