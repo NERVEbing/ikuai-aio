@@ -1,1 +1,5 @@
-.idea
+/bin/
+/dist/
+.env
+*.test
+coverage.out

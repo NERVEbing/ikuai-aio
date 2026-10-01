@@ -1,106 +1,72 @@
 package job
 
 import (
-	"bufio"
+	"context"
 	"fmt"
-	"log"
-	"net/http"
-	"strconv"
+	"log/slog"
+	"sync"
 	"time"
 
-	"github.com/NERVEbing/ikuai-aio/config"
-	"github.com/go-co-op/gocron"
+	"github.com/NERVEbing/ikuai-aio/v4/config"
+	"github.com/NERVEbing/ikuai-aio/v4/internal/schedule"
+	"github.com/robfig/cron/v3"
 )
 
-func Run(c *config.Config) error {
-	cron := gocron.NewScheduler(c.Timezone)
-	cron.SetMaxConcurrentJobs(1, gocron.WaitMode)
-
-	for n, i := range c.IKuaiCronCustomISPList {
-		tag := "updateCustomISP" + "-" + strconv.Itoa(n+1)
-		cron = setCron(cron, i.Cron, c.IKuaiCronSkipStart).Name(tag).Tag(tag)
-		if _, err := cron.Do(updateCustomISP, i, tag); err != nil {
-			logger("cron", "tag: %s, error: %v", tag, err)
+// Run serializes router writes. Each task has at most one running or queued
+// invocation; cancellation interrupts queued tasks, downloads and API calls.
+func Run(ctx context.Context, conf config.Config, worker *Worker, logger *slog.Logger) error {
+	scheduler := cron.New(cron.WithLocation(conf.Timezone))
+	serial := make(chan struct{}, 1)
+	var initial sync.WaitGroup
+	var jobs []cron.Job
+	register := func(task config.Task, kind string, execute func(context.Context) error) error {
+		spec, err := schedule.Parse(task.Schedule)
+		if err != nil {
+			return fmt.Errorf("%s/%s: %w", kind, task.Name, err)
 		}
-		logger(tag, "cron/interval: %s, skip start: %t, timezone: %s", i.Cron, c.IKuaiCronSkipStart, c.Timezone)
+		job := cron.FuncJob(func() {
+			select {
+			case serial <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-serial }()
+			if ctx.Err() != nil {
+				return
+			}
+			jobCtx, cancel := context.WithTimeout(ctx, conf.JobTimeout)
+			defer cancel()
+			start := time.Now()
+			if err := execute(jobCtx); err != nil {
+				logger.Error("task failed", "kind", kind, "name", task.Name, "error", err, "duration", time.Since(start))
+			} else {
+				logger.Info("task completed", "kind", kind, "name", task.Name, "duration", time.Since(start))
+			}
+		})
+		wrapped := cron.SkipIfStillRunning(cron.DefaultLogger)(job)
+		jobs = append(jobs, wrapped)
+		scheduler.Schedule(spec, wrapped)
+		return nil
 	}
-
-	for n, i := range c.IKuaiCronStreamDomainList {
-		tag := "updateStreamDomain" + "-" + strconv.Itoa(n+1)
-		cron = setCron(cron, i.Cron, c.IKuaiCronSkipStart).Name(tag).Tag(tag)
-		if _, err := cron.Do(updateStreamDomain, i, tag); err != nil {
-			logger("cron", "tag: %s, error: %v", tag, err)
+	for _, task := range conf.IPObjects {
+		if err := register(task.Task, "ip-object", func(ctx context.Context) error { return worker.SyncIPObjects(ctx, task) }); err != nil {
+			return err
 		}
-		logger(tag, "cron/interval: %s, skip start: %t, timezone: %s", i.Cron, c.IKuaiCronSkipStart, c.Timezone)
 	}
-
-	cron.RegisterEventListeners(
-		gocron.BeforeJobRuns(func(tag string) {
-			logger(tag, "running...")
-		}),
-		gocron.AfterJobRuns(func(tag string) {
-			jobs, err := cron.FindJobsByTag(tag)
-			if err != nil {
-				logger("cron", "error: %s", err.Error())
-			}
-			for _, i := range jobs {
-				logger(tag, "finished, next run time: %s", i.NextRun().String())
-			}
-		}),
-		gocron.WhenJobReturnsNoError(func(tag string) {
-			logger(tag, "success")
-		}),
-		gocron.WhenJobReturnsError(func(tag string, err error) {
-			logger(tag, "failed, error: %s", err.Error())
-		}),
-	)
-
-	logger("Run", "job length: %d", cron.Len())
-	cron.StartBlocking()
-
+	for _, task := range conf.DomainRules {
+		if err := register(task.Task, "domain-rule", func(ctx context.Context) error { return worker.SyncDomainRule(ctx, task) }); err != nil {
+			return err
+		}
+	}
+	if !conf.SkipStart {
+		for _, job := range jobs {
+			initial.Add(1)
+			go func() { defer initial.Done(); job.Run() }()
+		}
+	}
+	scheduler.Start()
+	<-ctx.Done()
+	<-scheduler.Stop().Done()
+	initial.Wait()
 	return nil
-}
-
-func logger(tag string, format string, v ...any) {
-	s := fmt.Sprintf("[job] tag: [%s], %s", tag, fmt.Sprintf(format, v...))
-	log.Printf("%s", s)
-}
-
-func fetch(url string) ([]string, error) {
-	var rows []string
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err = resp.Body.Close(); err != nil {
-			logger("defer fetch", "close body error: %s", err)
-		}
-	}()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("fetch status error: %s", resp.Status)
-	}
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		rows = append(rows, scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-
-	return rows, nil
-}
-
-func setCron(scheduler *gocron.Scheduler, cronStr string, isSkip bool) *gocron.Scheduler {
-	interval, err := time.ParseDuration(cronStr)
-	if err != nil {
-		scheduler = scheduler.Cron(cronStr)
-	} else {
-		scheduler = scheduler.Every(interval)
-		if isSkip {
-			scheduler = scheduler.StartAt(time.Now().Add(interval))
-		}
-	}
-
-	return scheduler
 }

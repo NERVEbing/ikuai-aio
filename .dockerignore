@@ -1,0 +1,7 @@
+.git
+.env
+bin
+dist
+coverage.out
+*.test
+grafana

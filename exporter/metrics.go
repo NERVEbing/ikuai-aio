@@ -1,379 +1,228 @@
 package exporter
 
 import (
+	"context"
 	"fmt"
-	"log"
+	"log/slog"
+	"math"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/NERVEbing/ikuai-aio/api"
+	"github.com/NERVEbing/ikuai-aio/v4/api"
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 )
 
-type Metrics struct {
-	client *api.Client
-
-	version *prometheus.Desc
-	up      *prometheus.Desc
-	uptime  *prometheus.Desc
-
-	cpuUsageRatio  *prometheus.Desc
-	cpuTemperature *prometheus.Desc
-
-	memorySizeKiloBytes    *prometheus.Desc
-	memoryUsageKiloBytes   *prometheus.Desc
-	memoryCachedKiloBytes  *prometheus.Desc
-	memoryBuffersKiloBytes *prometheus.Desc
-
-	interfaceInfo *prometheus.Desc
-
-	deviceCount *prometheus.Desc
-	deviceInfo  *prometheus.Desc
-
-	networkUploadTotalBytes   *prometheus.Desc
-	networkDownloadTotalBytes *prometheus.Desc
-	networkUploadSpeedBytes   *prometheus.Desc
-	networkDownloadSpeedBytes *prometheus.Desc
-	networkConnectCount       *prometheus.Desc
+type Reader interface {
+	System(context.Context) (*api.System, error)
+	Interfaces(context.Context) (*api.Interfaces, error)
+	OnlineClients(context.Context, bool) ([]api.OnlineClient, error)
 }
 
-func NewMetrics(namespace string) *Metrics {
-	client := api.NewClient()
-	if err := client.Login(); err != nil {
-		log.Fatalln(err)
-	}
+type Metrics struct {
+	reader  Reader
+	ctx     context.Context
+	timeout time.Duration
+	ipv6    bool
+	logger  *slog.Logger
+	desc    map[string]*prometheus.Desc
+	flight  singleflight.Group
+}
 
-	return &Metrics{
-		client:                    client,
-		version:                   newDesc(namespace, "version", "", []string{"version", "arch", "ver_string"}),
-		up:                        newDesc(namespace, "up", "", []string{"id"}),
-		uptime:                    newDesc(namespace, "uptime", "", []string{"id"}),
-		cpuUsageRatio:             newDesc(namespace, "cpu_usage_ratio", "", []string{"id"}),
-		cpuTemperature:            newDesc(namespace, "cpu_temperature", "", nil),
-		memorySizeKiloBytes:       newDesc(namespace, "memory_size_kilo_bytes", "", nil),
-		memoryUsageKiloBytes:      newDesc(namespace, "memory_usage_kilo_bytes", "", nil),
-		memoryCachedKiloBytes:     newDesc(namespace, "memory_cached_kilo_bytes", "", nil),
-		memoryBuffersKiloBytes:    newDesc(namespace, "memory_buffers_kilo_bytes", "", nil),
-		interfaceInfo:             newDesc(namespace, "interface_info", "", []string{"id", "interface", "comment", "internet", "parent_interface", "ip_addr", "display"}),
-		deviceCount:               newDesc(namespace, "device_count", "", nil),
-		deviceInfo:                newDesc(namespace, "device_info", "", []string{"id", "mac", "hostname", "ip_addr", "comment", "display"}),
-		networkUploadTotalBytes:   newDesc(namespace, "network_upload_total_bytes", "", []string{"id", "display", "ip_addr"}),
-		networkDownloadTotalBytes: newDesc(namespace, "network_download_total_bytes", "", []string{"id", "display", "ip_addr"}),
-		networkUploadSpeedBytes:   newDesc(namespace, "network_upload_speed_bytes", "", []string{"id", "display", "ip_addr"}),
-		networkDownloadSpeedBytes: newDesc(namespace, "network_download_speed_bytes", "", []string{"id", "display", "ip_addr"}),
-		networkConnectCount:       newDesc(namespace, "network_connect_count", "", []string{"id", "display", "ip_addr"}),
+func NewMetrics(ctx context.Context, reader Reader, timeout time.Duration, ipv6 bool, logger *slog.Logger) *Metrics {
+	m := &Metrics{ctx: ctx, reader: reader, timeout: timeout, ipv6: ipv6, logger: logger, desc: make(map[string]*prometheus.Desc)}
+	define := func(name, help string, labels ...string) {
+		m.desc[name] = prometheus.NewDesc("ikuai_"+name, help, labels, nil)
 	}
+	define("info", "Router firmware and host information.", "version", "arch", "ver_string", "hostname")
+	define("up", "Whether the router or monitored interface is available.", "id")
+	define("uptime_seconds", "Router or interface uptime in seconds.", "id")
+	define("cpu_usage_ratio", "CPU utilization from zero to one.", "id")
+	define("cpu_temperature_celsius", "CPU temperature in degrees Celsius.", "sensor")
+	for _, kind := range []string{"total", "used", "available", "cached", "buffers"} {
+		define("memory_"+kind+"_bytes", "Router memory in bytes.")
+	}
+	define("interface_info", "Network interface identity.", "id", "interface", "comment", "internet", "parent_interface", "ip_addr", "display")
+	define("device_count", "Number of online terminals reported by the router.")
+	define("device_info", "Online terminal identity, one series per IP address.", "id", "mac", "name", "ip_addr", "comment", "display")
+	define("network_upload_total_bytes", "Cumulative uploaded bytes.", "id", "display", "ip_addr")
+	define("network_download_total_bytes", "Cumulative downloaded bytes.", "id", "display", "ip_addr")
+	define("network_upload_bytes_per_second", "Current upload rate in bytes per second.", "id", "display", "ip_addr")
+	define("network_download_bytes_per_second", "Current download rate in bytes per second.", "id", "display", "ip_addr")
+	define("network_connections", "Current network connections.", "id", "display", "ip_addr")
+	define("scrape_success", "Whether every enabled collector succeeded.")
+	define("collector_success", "Whether this collector succeeded.", "collector")
+	define("collector_duration_seconds", "Wall time spent reading this collector, including pagination.", "collector")
+	return m
 }
 
 func (m *Metrics) Describe(ch chan<- *prometheus.Desc) {
-	ch <- m.version
-	ch <- m.up
-	ch <- m.uptime
-	ch <- m.cpuUsageRatio
-	ch <- m.cpuTemperature
-	ch <- m.memorySizeKiloBytes
-	ch <- m.memoryUsageKiloBytes
-	ch <- m.memoryCachedKiloBytes
-	ch <- m.memoryBuffersKiloBytes
-	ch <- m.interfaceInfo
-	ch <- m.deviceCount
-	ch <- m.deviceInfo
-	ch <- m.networkUploadTotalBytes
-	ch <- m.networkDownloadTotalBytes
-	ch <- m.networkUploadSpeedBytes
-	ch <- m.networkDownloadSpeedBytes
-	ch <- m.networkConnectCount
+	for _, descriptor := range m.desc {
+		ch <- descriptor
+	}
+}
+
+type result struct {
+	name     string
+	err      error
+	duration time.Duration
+}
+
+type snapshot struct {
+	system             *api.System
+	interfaces         *api.Interfaces
+	clients4, clients6 []api.OnlineClient
+	results            []result
+}
+
+func (m *Metrics) read() *snapshot {
+	ctx, cancel := context.WithTimeout(m.ctx, m.timeout)
+	defer cancel()
+	names := []string{"system", "interfaces", "clients_ipv4"}
+	if m.ipv6 {
+		names = append(names, "clients_ipv6")
+	}
+	s := &snapshot{results: make([]result, len(names))}
+	var group errgroup.Group
+	for index, name := range names {
+		group.Go(func() error {
+			start := time.Now()
+			var err error
+			switch name {
+			case "system":
+				s.system, err = m.reader.System(ctx)
+			case "interfaces":
+				s.interfaces, err = m.reader.Interfaces(ctx)
+			case "clients_ipv4":
+				s.clients4, err = m.reader.OnlineClients(ctx, false)
+			case "clients_ipv6":
+				s.clients6, err = m.reader.OnlineClients(ctx, true)
+			}
+			s.results[index] = result{name: name, err: err, duration: time.Since(start)}
+			if err != nil {
+				m.logger.Warn("collector failed", "collector", name, "error", err)
+			}
+			return nil // Preserve successful collectors when another endpoint fails.
+		})
+	}
+	group.Wait()
+	return s
 }
 
 func (m *Metrics) Collect(ch chan<- prometheus.Metric) {
-	defer func() {
-		if err := recover(); err != nil {
-			logger("recover", "error: %s", err)
-			ch <- prometheus.MustNewConstMetric(
-				m.up,
-				prometheus.GaugeValue,
-				0,
-				"host",
-			)
+	// Concurrent Prometheus scrapes share the same in-flight router snapshot.
+	value, _, _ := m.flight.Do("snapshot", func() (any, error) { return m.read(), nil })
+	s := value.(*snapshot)
+	emit := func(name string, kind prometheus.ValueType, value float64, labels ...string) {
+		ch <- prometheus.MustNewConstMetric(m.desc[name], kind, value, labels...)
+	}
+	gauge := func(name string, value float64, labels ...string) {
+		emit(name, prometheus.GaugeValue, value, labels...)
+	}
+	success := true
+	for _, r := range s.results {
+		ok := r.err == nil
+		success = success && ok
+		gauge("collector_success", boolean(ok), r.name)
+		gauge("collector_duration_seconds", r.duration.Seconds(), r.name)
+	}
+	gauge("scrape_success", boolean(success))
+	gauge("up", boolean(s.system != nil && s.results[0].err == nil), "host")
+	traffic := func(id, display, address string, t api.Traffic) {
+		emit("network_upload_total_bytes", prometheus.CounterValue, float64(t.TotalUp), id, display, address)
+		emit("network_download_total_bytes", prometheus.CounterValue, float64(t.TotalDown), id, display, address)
+		gauge("network_upload_bytes_per_second", float64(t.Upload), id, display, address)
+		gauge("network_download_bytes_per_second", float64(t.Download), id, display, address)
+		gauge("network_connections", float64(t.Connections), id, display, address)
+	}
+	if sys := s.system; sys != nil && s.results[0].err == nil {
+		gauge("info", 1, sys.Version.Version, sys.Version.Arch, sys.Version.Description, sys.Hostname)
+		gauge("uptime_seconds", float64(sys.Uptime), "host")
+		traffic("host", "host", "host", sys.Stream)
+		for index, value := range sys.CPU {
+			usage, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(value), "%")), 64)
+			if err != nil || math.IsNaN(usage) || math.IsInf(usage, 0) || usage < 0 || usage > 100 {
+				continue
+			}
+			id := "all"
+			if index > 0 {
+				id = fmt.Sprintf("core/%d", index-1)
+			}
+			gauge("cpu_usage_ratio", usage/100, id)
 		}
-	}()
-
-	if !m.client.IsLogin() {
-		logger("IsLogin", "cookie has expired, try logged in again")
-		if err := m.client.Login(); err != nil {
-			logger("Login", "error: %s", err)
-			return
+		for sensor, temperature := range sys.CPUTemp {
+			gauge("cpu_temperature_celsius", float64(temperature), strconv.Itoa(sensor))
 		}
-		logger("Login", "success")
+		gauge("memory_total_bytes", float64(sys.Memory.Total)*1024)
+		gauge("memory_used_bytes", max(float64(sys.Memory.Total-sys.Memory.Available), 0)*1024)
+		gauge("memory_available_bytes", float64(sys.Memory.Available)*1024)
+		gauge("memory_cached_bytes", float64(sys.Memory.Cached)*1024)
+		gauge("memory_buffers_bytes", float64(sys.Memory.Buffers)*1024)
+		gauge("device_count", float64(sys.OnlineUser.Count))
 	}
-
-	homepageShowSysStatResp, err := m.client.HomepageShowSysStat()
-	if err != nil {
-		logger("HomepageShowSysStat", "error: %s", err)
-		return
-	}
-	monitorLanIPShowResp, err := m.client.MonitorLanIPShow()
-	if err != nil {
-		logger("MonitorLanIPShow", "error: %s", err)
-		return
-	}
-	monitorIFaceShowResp, err := m.client.MonitorIFaceShow()
-	if err != nil {
-		logger("MonitorIFaceShow", "error: %s", err)
-		return
-	}
-
-	sysStat := homepageShowSysStatResp.Data.SysStat
-	iFaceStream := monitorIFaceShowResp.Data.IFaceStream
-	iFaceCheck := monitorIFaceShowResp.Data.IFaceCheck
-	lanDevices := monitorLanIPShowResp.Data.Data
-
-	ch <- prometheus.MustNewConstMetric(
-		m.version,
-		prometheus.GaugeValue,
-		1,
-		sysStat.VerInfo.Version, sysStat.VerInfo.Arch, sysStat.VerInfo.VerString,
-	)
-
-	{
-		ch <- prometheus.MustNewConstMetric(
-			m.up,
-			prometheus.GaugeValue,
-			1,
-			"host",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			m.uptime,
-			prometheus.GaugeValue,
-			float64(sysStat.Uptime),
-			"host",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			m.networkUploadTotalBytes,
-			prometheus.GaugeValue,
-			float64(sysStat.Stream.TotalUp),
-			"host", "host", "host",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			m.networkDownloadTotalBytes,
-			prometheus.GaugeValue,
-			float64(sysStat.Stream.TotalDown),
-			"host", "host", "host",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			m.networkUploadSpeedBytes,
-			prometheus.GaugeValue,
-			float64(sysStat.Stream.Upload),
-			"host", "host", "host",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			m.networkDownloadSpeedBytes,
-			prometheus.GaugeValue,
-			float64(sysStat.Stream.Download),
-			"host", "host", "host",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			m.networkConnectCount,
-			prometheus.GaugeValue,
-			float64(sysStat.Stream.ConnectNum),
-			"host", "host", "host",
-		)
-	}
-
-	if len(sysStat.Cpu) > 1 {
-		sysStat.Cpu = sysStat.Cpu[1:]
-	}
-	for k, v := range sysStat.Cpu {
-		s := v[:len(v)-1]
-		f, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			logger("cpuUsageRatio", "error: %s", err)
+	if interfaces := s.interfaces; interfaces != nil && s.results[1].err == nil {
+		checks := make(map[string]api.InterfaceCheck, len(interfaces.Checks))
+		for _, check := range interfaces.Checks {
+			checks[check.Interface] = check
 		}
-		ch <- prometheus.MustNewConstMetric(
-			m.cpuUsageRatio,
-			prometheus.GaugeValue,
-			f/100,
-			fmt.Sprintf("core/%v", k),
-		)
-	}
-
-	cpuTemp := 0.0
-	if len(sysStat.CpuTemp) > 0 {
-		cpuTemp = float64(sysStat.CpuTemp[0])
-	}
-	ch <- prometheus.MustNewConstMetric(
-		m.cpuTemperature,
-		prometheus.GaugeValue,
-		cpuTemp,
-	)
-
-	ch <- prometheus.MustNewConstMetric(
-		m.memorySizeKiloBytes,
-		prometheus.GaugeValue,
-		float64(sysStat.Memory.Total),
-	)
-
-	ch <- prometheus.MustNewConstMetric(
-		m.memoryUsageKiloBytes,
-		prometheus.GaugeValue,
-		float64(sysStat.Memory.Total-sysStat.Memory.Available),
-	)
-
-	ch <- prometheus.MustNewConstMetric(
-		m.memoryCachedKiloBytes,
-		prometheus.GaugeValue,
-		float64(sysStat.Memory.Cached),
-	)
-
-	ch <- prometheus.MustNewConstMetric(
-		m.memoryBuffersKiloBytes,
-		prometheus.GaugeValue,
-		float64(sysStat.Memory.Buffers),
-	)
-
-	for _, i := range iFaceStream {
-		internet := ""
-		parentInterface := ""
-		interfaceUp := 1
-		interfaceID := fmt.Sprintf("interface/%s", i.Interface)
-		interfaceUptime := int64(0)
-		display := displayName(i.Interface)
-
-		for _, n := range iFaceCheck {
-			if n.Interface == i.Interface {
-				internet = n.Internet
-				parentInterface = n.ParentInterface
-				if n.Result != "success" {
-					interfaceUp = 0
-				} else {
-					if updateTime, err := strconv.Atoi(n.UpdateTime); err == nil {
-						interfaceUptime = time.Now().Unix() - int64(updateTime)
-					}
+		seen := map[string]bool{}
+		for _, stream := range interfaces.Streams {
+			if stream.Interface == "" || seen[stream.Interface] {
+				continue
+			}
+			seen[stream.Interface] = true
+			id, display := "interface/"+stream.Interface, displayName(stream.Comment, stream.Interface)
+			check, found := checks[stream.Interface]
+			gauge("interface_info", 1, id, stream.Interface, stream.Comment, check.Internet, check.Parent, stream.Address, display)
+			if found {
+				gauge("up", boolean(check.Result == "success"), id)
+				if updated, err := strconv.ParseInt(check.Updated, 10, 64); err == nil && updated > 0 && updated <= time.Now().Unix() && check.Result == "success" {
+					gauge("uptime_seconds", float64(time.Now().Unix()-updated), id)
 				}
 			}
-		}
-
-		ch <- prometheus.MustNewConstMetric(
-			m.interfaceInfo,
-			prometheus.GaugeValue,
-			1,
-			interfaceID, i.Interface, i.Comment, internet, parentInterface, i.IpAddr, display,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.up,
-			prometheus.GaugeValue,
-			float64(interfaceUp),
-			interfaceID,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.uptime,
-			prometheus.GaugeValue,
-			float64(interfaceUptime),
-			interfaceID,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.networkUploadTotalBytes,
-			prometheus.GaugeValue,
-			float64(i.TotalUp),
-			interfaceID, display, i.IpAddr,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.networkDownloadTotalBytes,
-			prometheus.GaugeValue,
-			float64(i.TotalDown),
-			interfaceID, display, i.IpAddr,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.networkUploadSpeedBytes,
-			prometheus.GaugeValue,
-			float64(i.Upload),
-			interfaceID, display, i.IpAddr,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.networkDownloadSpeedBytes,
-			prometheus.GaugeValue,
-			float64(i.Download),
-			interfaceID, display, i.IpAddr,
-		)
-
-		if interfaceConnectCount, err := strconv.Atoi(i.ConnectNum); err == nil {
-			ch <- prometheus.MustNewConstMetric(
-				m.networkConnectCount,
-				prometheus.GaugeValue,
-				float64(interfaceConnectCount),
-				interfaceID, display, i.IpAddr,
-			)
+			connections, err := strconv.ParseFloat(stream.Connections, 64)
+			trafficData := api.Traffic{Upload: stream.Upload, Download: stream.Download, TotalUp: stream.TotalUp, TotalDown: stream.TotalDown}
+			// "--" means the firmware does not expose a connection count.
+			emit("network_upload_total_bytes", prometheus.CounterValue, float64(trafficData.TotalUp), id, display, stream.Address)
+			emit("network_download_total_bytes", prometheus.CounterValue, float64(trafficData.TotalDown), id, display, stream.Address)
+			gauge("network_upload_bytes_per_second", float64(trafficData.Upload), id, display, stream.Address)
+			gauge("network_download_bytes_per_second", float64(trafficData.Download), id, display, stream.Address)
+			if err == nil && !math.IsNaN(connections) && !math.IsInf(connections, 0) {
+				gauge("network_connections", connections, id, display, stream.Address)
+			}
 		}
 	}
-
-	ch <- prometheus.MustNewConstMetric(
-		m.deviceCount,
-		prometheus.GaugeValue,
-		float64(sysStat.OnlineUser.Count),
-	)
-
-	for _, i := range lanDevices {
-		deviceID := fmt.Sprintf("device/%s", i.IpAddr)
-		display := displayName(i.Comment, i.Hostname, i.IpAddr, i.Mac)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.deviceInfo,
-			prometheus.GaugeValue,
-			1,
-			deviceID, i.Mac, i.Hostname, i.IpAddr, i.Comment, display,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.networkUploadTotalBytes,
-			prometheus.GaugeValue,
-			float64(i.TotalUp),
-			deviceID, display, i.IpAddr,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.networkUploadSpeedBytes,
-			prometheus.GaugeValue,
-			float64(i.Upload),
-			deviceID, display, i.IpAddr,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.networkDownloadTotalBytes,
-			prometheus.GaugeValue,
-			float64(i.TotalDown),
-			deviceID, display, i.IpAddr,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.networkDownloadSpeedBytes,
-			prometheus.GaugeValue,
-			float64(i.Download),
-			deviceID, display, i.IpAddr,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			m.networkConnectCount,
-			prometheus.GaugeValue,
-			float64(i.ConnectNum),
-			deviceID, display, i.IpAddr,
-		)
+	seen := map[string]bool{}
+	for index, clients := range [][]api.OnlineClient{s.clients4, s.clients6} {
+		if index+2 >= len(s.results) || s.results[index+2].err != nil {
+			continue
+		}
+		for _, client := range clients {
+			if client.Address == "" || seen[client.Address] {
+				continue
+			}
+			seen[client.Address] = true
+			id := "device/" + client.Address
+			display := displayName(client.Comment, client.Name, client.Address, client.MAC)
+			gauge("device_info", 1, id, client.MAC, client.Name, client.Address, client.Comment, display)
+			traffic(id, display, client.Address, client.Traffic)
+		}
 	}
 }
 
-func newDesc(namespace string, metricName string, help string, labels []string) *prometheus.Desc {
-	return prometheus.NewDesc(namespace+"_"+metricName, help, labels, nil)
+func boolean(value bool) float64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
-func displayName(args ...string) string {
-	for _, i := range args {
-		if len(i) > 0 {
-			return i
+func displayName(names ...string) string {
+	for _, name := range names {
+		if name != "" {
+			return name
 		}
 	}
 	return "unknown"
